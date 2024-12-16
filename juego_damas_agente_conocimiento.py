@@ -72,21 +72,22 @@ def is_game_over(board):
     if red_count == 0:
         return True, "Jugador Negro gana"
     elif black_count == 0:
-        return True, "Jugador Rojo gana"
+        return True, "Jugador Blanco gana"
     return False, None
 
-# Generar movimientos posibles
 def generate_moves(board, player):
     moves = []
     for row in range(GRID_SIZE):
         for col in range(GRID_SIZE):
             if board[row][col] == player:
+                # Movimientos simples (diagonales)
                 for dr, dc in [(-1, -1), (-1, 1), (1, -1), (1, 1)]:
                     new_row, new_col = row + dr, col + dc
                     if 0 <= new_row < GRID_SIZE and 0 <= new_col < GRID_SIZE and board[new_row][new_col] is None:
                         moves.append(((row, col), (new_row, new_col)))
 
-                    # Saltos (capturas)
+                # Saltos (capturas)
+                for dr, dc in [(-1, -1), (-1, 1), (1, -1), (1, 1)]:
                     jump_row, jump_col = row + 2 * dr, col + 2 * dc
                     mid_row, mid_col = row + dr, col + dc
                     if (0 <= jump_row < GRID_SIZE and 0 <= jump_col < GRID_SIZE and 
@@ -94,8 +95,8 @@ def generate_moves(board, player):
                         board[mid_row][mid_col] is not None and 
                         board[mid_row][mid_col] != player):
                         moves.append(((row, col), (jump_row, jump_col)))
-
     return moves
+
 
 # Ejecutar un movimiento
 def handle_move(board, move):
@@ -112,11 +113,20 @@ def handle_move(board, move):
 
     return temp_board
 
-# Evaluación del tablero
 def evaluate_board(board):
     red_count = sum(row.count('R') for row in board)
     black_count = sum(row.count('B') for row in board)
-    return black_count - red_count
+
+    # Considerar movimientos disponibles
+    red_moves = len(generate_moves(board, 'R'))
+    black_moves = len(generate_moves(board, 'B'))
+
+    # Valorar posiciones defensivas/ofensivas
+    red_position_score = sum((row * (GRID_SIZE - 1)) for row in range(GRID_SIZE) for col in range(GRID_SIZE) if board[row][col] == 'R')
+    black_position_score = sum(((GRID_SIZE - 1 - row) * (GRID_SIZE - 1)) for row in range(GRID_SIZE) for col in range(GRID_SIZE) if board[row][col] == 'B')
+
+    return (black_count - red_count) + (black_moves - red_moves) + (black_position_score - red_position_score)
+
 
 # Minimax con poda Alpha-Beta
 def minimax(board, depth, alpha, beta, maximizing_player):
