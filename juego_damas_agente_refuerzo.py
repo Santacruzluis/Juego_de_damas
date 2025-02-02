@@ -33,10 +33,10 @@ Q = {}  # Tabla Q para el aprendizaje
 Q_FILE = "q_table.json"  # Archivo para guardar la tabla Q
 
 # Parámetros de Q-learning
-alpha = 0.1  # Tasa de aprendizaje
-gamma = 0.9  # Factor de descuento
-epsilon = 0.2  # Probabilidad de exploración
-epsilon_decay = 0.995  # Factor de disminución de epsilon
+alpha = 0.7 # Tasa de aprendizaje
+gamma = 0.99  # Factor de descuento
+epsilon = 1.0  # Probabilidad de exploración
+epsilon_decay = 0.999  # Factor de disminución de epsilon
 epsilon_min = 0.1  # Mínimo valor de epsilon
 
 # Inicializar las piezas
@@ -150,60 +150,119 @@ def handle_move(board, move):
         board[captured_row][captured_col] = None
     return board
 
+# Evaluar el estado del tablero (sistema de recompensas y castigos)
+def evaluate_state(board, prev_board=None, last_move=None):
 
-# Evaluar el estado del tablero (sistema de recompensas)
-def evaluate_state(board, last_move=None):
-
-    # Contar fichas
+    # Contar piezas
     red_count = sum(row.count('R') + row.count('RK') for row in board)
     black_count = sum(row.count('B') + row.count('BK') for row in board)
-
-    # Condiciones terminales: victoria o derrota
+    
+    # Condiciones terminales
     if red_count == 0:
-        return 100  # Victoria de la IA
+        return 100   # Victoria para 'B'
     elif black_count == 0:
-        return -100  # Victoria del jugador
-
+        return -100  # Victoria para 'R'
+    
     reward = 0
-
-    # Recompensa por diferencia de cantidad de fichas (ponderada)
+    # Diferencia en número de fichas
     reward += (black_count - red_count) * 2
-
-    # Recompensa adicional por reinas: 
-    # Se recompensa que la IA tenga más reinas y se penaliza que el jugador tenga más.
-    ai_queens = sum(row.count('BK') for row in board)
+    
+    # Diferencia en reinas
+    curr_black_queens = sum(row.count('BK') for row in board)
     player_queens = sum(row.count('RK') for row in board)
-    reward += (ai_queens - player_queens) * 4
+    reward += (curr_black_queens - player_queens) * 4
 
-    # Incentivar la cercanía a las fichas enemigas
-    player_positions = [(r, c) for r in range(GRID_SIZE) for c in range(GRID_SIZE) if board[r][c] in ['R', 'RK']]
-    ai_positions = [(r, c, board[r][c]) for r in range(GRID_SIZE) for c in range(GRID_SIZE) if board[r][c] in ['B', 'BK']]
+    # Si se proporciona prev_board, castigar pérdida de piezas
+    if prev_board is not None:
+        prev_black_count = sum(row.count('B') + row.count('BK') for row in prev_board)
+        prev_black_queens = sum(row.count('BK') for row in prev_board)
+        if black_count < prev_black_count:
+            lost = prev_black_count - black_count
+            reward -= lost * 15   # Penalización por pérdida de ficha
+        if curr_black_queens < prev_black_queens:
+            lost_q = prev_black_queens - curr_black_queens
+            reward -= lost_q * 25  # Penalización por pérdida de reina
 
-    # Para cada ficha de la IA, se resta una penalización proporcional a la distancia a la ficha enemiga más cercana.
-    for r, c, piece in ai_positions:
-        if player_positions:
-            distances = [abs(r - pr) + abs(c - pc) for pr, pc in player_positions]
-            min_distance = min(distances)
-            # Penalizamos cuanto mayor sea la distancia.
-            reward -= min_distance * 2
-        else:
-            # Si no hay fichas enemigas, no se penaliza por distancia.
-            pass
-
-    # Penalizar movimientos “inútiles”: si la jugada no fue un salto (captura)
-    # y además la ficha se movió hacia adelante y luego retrocedió (movimiento de ida y vuelta).
-    # Para esto se usa el parámetro opcional last_move.
+    # Evaluar el movimiento ejecutado
     if last_move is not None:
         (old_row, old_col), (new_row, new_col) = last_move
-        # Si el movimiento no es de captura (salto de 2 casillas)...
-        if abs(new_row - old_row) < 2:
-            # Suponiendo que para la IA (fichas 'B' o 'BK') avanzar es ir hacia arriba (fila menor)
-            # penalizamos si el movimiento fue hacia abajo (retroceso) o no avanzó.
-            if new_row >= old_row:
+        # Si es un movimiento de captura, bonus
+        if abs(new_row - old_row) == 2:
+            reward += 10
+        else:
+            if new_row < old_row:
+                reward += 5
+            elif new_row > old_row:
                 reward -= 5
 
-    return reward
+    # Incentivar posiciones centrales para fichas 'B'
+    center_r, center_c = GRID_SIZE/2 - 0.5, GRID_SIZE/2 - 0.5
+    for r in range(GRID_SIZE):
+        for c in range(GRID_SIZE):
+            if board[r][c] == 'B':
+                dist = abs(r - center_r) + abs(c - center_c)
+                reward += max(0, 5 - dist)
 
+    # Penalizar por no estar cerca de piezas enemigas: para cada ficha 'B' sin enemigo adyacente
+    for r in range(GRID_SIZE):
+        for c in range(GRID_SIZE):
+            if board[r][c] == 'B':
+                enemy_adjacent = False
+                for dr in [-1, 0, 1]:
+                    for dc in [-1, 0, 1]:
+                        if dr == 0 and dc == 0:
+                            continue
+                        rr, cc = r + dr, c + dc
+                        if 0 <= rr < GRID_SIZE and 0 <= cc < GRID_SIZE:
+                            if board[rr][cc] in ['R', 'RK']:
+                                enemy_adjacent = True
+                if not enemy_adjacent:
+                    reward -= 4
+
+    # Castigo: si el enemigo tiene movimientos de captura disponibles, penalizar
+    enemy_moves = generate_moves(board, 'R')
+    for move in enemy_moves:
+        if abs(move[0][0] - move[1][0]) == 2:
+            reward -= 8
+
+    # Castigo: penalizar baja movilidad de 'B'
+    ai_moves = len(generate_moves(board, 'B'))
+    if ai_moves < 2:
+        reward -= 10
+
+    # Castigo extra: si hay oportunidades de captura disponibles y el movimiento no fue captura
+    available_moves = generate_moves(board, 'B')
+    capture_moves = [m for m in available_moves if abs(m[0][0] - m[1][0]) == 2]
+    if capture_moves and last_move is not None:
+        (old_row, old_col), (new_row, new_col) = last_move
+        if abs(new_row - old_row) < 2:  # No se aprovechó la oportunidad de captura
+            reward -= 5
+
+    # Castigo extra: penalizar fichas 'B' en el borde sin apoyo
+    for r in range(GRID_SIZE):
+        for c in range(GRID_SIZE):
+            if board[r][c] == 'B':
+                if r == 0 or r == GRID_SIZE - 1 or c == 0 or c == GRID_SIZE - 1:
+                    has_support = False
+                    for dr in [-1, 0, 1]:
+                        for dc in [-1, 0, 1]:
+                            rr, cc = r + dr, c + dc
+                            if 0 <= rr < GRID_SIZE and 0 <= cc < GRID_SIZE:
+                                if board[rr][cc] == 'B' and (dr != 0 or dc != 0):
+                                    has_support = True
+                    if not has_support:
+                        reward -= 5
+
+    # Castigo o bonus por la coronación:
+    # Si una ficha 'B' alcanza la fila de promoción (fila 0) y no es reina, penalizar.
+    for c in range(GRID_SIZE):
+        if board[0][c] == 'B':
+            reward -= 5
+    # Bonus por tener fichas coronadas (reinas)
+    if curr_black_queens > 0:
+        reward += curr_black_queens * 8
+
+    return reward
 
 # Seleccionar acción basada en Q-learning
 def select_action(state, moves):

@@ -19,10 +19,10 @@ GREEN = (0, 255, 0)
 # -------------------------------
 Q = {}                # Tabla Q para Q-learning
 Q_FILE = "q_table.json"
-alpha = 0.1         # Tasa de aprendizaje
-gamma = 0.9         # Factor de descuento
-epsilon = 0.2       # Probabilidad de exploración
-epsilon_decay = 0.995  # Decaimiento de epsilon por partida
+alpha = 0.7         # Tasa de aprendizaje
+gamma = 0.99        # Factor de descuento
+epsilon = 1.0       # Probabilidad de exploración
+epsilon_decay = 0.999  # Decaimiento de epsilon por partida
 epsilon_min = 0.1       # Valor mínimo de epsilon
 
 # Roles:
@@ -59,7 +59,7 @@ def generate_moves(board, player):
                             moves.append(((row, col), (new_row, new_col)))
                 # Movimientos de salto (captura)
                 for dr, dc in [(-1, -1), (-1, 1), (1, -1), (1, 1)]:
-                    jump_row, jump_col = row + 2*dr, col + 2*dc
+                    jump_row, jump_col = row + 2 * dr, col + 2 * dc
                     mid_row, mid_col = row + dr, col + dc
                     if (0 <= jump_row < GRID_SIZE and 0 <= jump_col < GRID_SIZE and
                         board[jump_row][jump_col] is None and 
@@ -107,19 +107,119 @@ def select_action(state, moves):
     best_moves = [m for i, m in enumerate(moves) if q_values[i] == max_q]
     return random.choice(best_moves)
 
-def evaluate_state(board, last_move=None):
-    """
-    Sistema de recompensas para Q-learning.
-    Retorna 100 si no quedan piezas 'R' (gana B) y -100 si no quedan piezas 'B'.
-    De lo contrario, retorna (black_count - red_count)*2.
-    """
-    red_count = sum(row.count('R') for row in board)
-    black_count = sum(row.count('B') for row in board)
+# Evaluar el estado del tablero (sistema de recompensas y castigos mejorado)
+def evaluate_state(board, prev_board=None, last_move=None):
+
+    # Contar piezas
+    red_count = sum(row.count('R') + row.count('RK') for row in board)
+    black_count = sum(row.count('B') + row.count('BK') for row in board)
+    
+    # Condiciones terminales
     if red_count == 0:
-        return 100
+        return 100   # Victoria para 'B'
     elif black_count == 0:
-        return -100
-    return (black_count - red_count) * 2
+        return -100  # Victoria para 'R'
+    
+    reward = 0
+    # Diferencia en número de fichas
+    reward += (black_count - red_count) * 2
+    
+    # Diferencia en reinas
+    curr_black_queens = sum(row.count('BK') for row in board)
+    player_queens = sum(row.count('RK') for row in board)
+    reward += (curr_black_queens - player_queens) * 4
+
+    # Si se proporciona prev_board, castigar pérdida de piezas
+    if prev_board is not None:
+        prev_black_count = sum(row.count('B') + row.count('BK') for row in prev_board)
+        prev_black_queens = sum(row.count('BK') for row in prev_board)
+        if black_count < prev_black_count:
+            lost = prev_black_count - black_count
+            reward -= lost * 15   # Penalización por pérdida de ficha
+        if curr_black_queens < prev_black_queens:
+            lost_q = prev_black_queens - curr_black_queens
+            reward -= lost_q * 25  # Penalización por pérdida de reina
+
+    # Evaluar el movimiento ejecutado
+    if last_move is not None:
+        (old_row, old_col), (new_row, new_col) = last_move
+        # Si es un movimiento de captura, bonus
+        if abs(new_row - old_row) == 2:
+            reward += 10
+        else:
+            if new_row < old_row:
+                reward += 5
+            elif new_row > old_row:
+                reward -= 5
+
+    # Incentivar posiciones centrales para fichas 'B'
+    center_r, center_c = GRID_SIZE/2 - 0.5, GRID_SIZE/2 - 0.5
+    for r in range(GRID_SIZE):
+        for c in range(GRID_SIZE):
+            if board[r][c] == 'B':
+                dist = abs(r - center_r) + abs(c - center_c)
+                reward += max(0, 5 - dist)
+
+    # Penalizar por no estar cerca de piezas enemigas: para cada ficha 'B' sin enemigo adyacente
+    for r in range(GRID_SIZE):
+        for c in range(GRID_SIZE):
+            if board[r][c] == 'B':
+                enemy_adjacent = False
+                for dr in [-1, 0, 1]:
+                    for dc in [-1, 0, 1]:
+                        if dr == 0 and dc == 0:
+                            continue
+                        rr, cc = r + dr, c + dc
+                        if 0 <= rr < GRID_SIZE and 0 <= cc < GRID_SIZE:
+                            if board[rr][cc] in ['R', 'RK']:
+                                enemy_adjacent = True
+                if not enemy_adjacent:
+                    reward -= 4
+
+    # Castigo: si el enemigo tiene movimientos de captura disponibles, penalizar
+    enemy_moves = generate_moves(board, 'R')
+    for move in enemy_moves:
+        if abs(move[0][0] - move[1][0]) == 2:
+            reward -= 8
+
+    # Castigo: penalizar baja movilidad de 'B'
+    ai_moves = len(generate_moves(board, 'B'))
+    if ai_moves < 2:
+        reward -= 10
+
+    # Castigo extra: si hay oportunidades de captura disponibles y el movimiento no fue captura
+    available_moves = generate_moves(board, 'B')
+    capture_moves = [m for m in available_moves if abs(m[0][0] - m[1][0]) == 2]
+    if capture_moves and last_move is not None:
+        (old_row, old_col), (new_row, new_col) = last_move
+        if abs(new_row - old_row) < 2:  # No se aprovechó la oportunidad de captura
+            reward -= 5
+
+    # Castigo extra: penalizar fichas 'B' en el borde sin apoyo
+    for r in range(GRID_SIZE):
+        for c in range(GRID_SIZE):
+            if board[r][c] == 'B':
+                if r == 0 or r == GRID_SIZE - 1 or c == 0 or c == GRID_SIZE - 1:
+                    has_support = False
+                    for dr in [-1, 0, 1]:
+                        for dc in [-1, 0, 1]:
+                            rr, cc = r + dr, c + dc
+                            if 0 <= rr < GRID_SIZE and 0 <= cc < GRID_SIZE:
+                                if board[rr][cc] == 'B' and (dr != 0 or dc != 0):
+                                    has_support = True
+                    if not has_support:
+                        reward -= 5
+
+    # Castigo o bonus por la coronación:
+    # Si una ficha 'B' alcanza la fila de promoción (fila 0) y no es reina, penalizar.
+    for c in range(GRID_SIZE):
+        if board[0][c] == 'B':
+            reward -= 5
+    # Bonus por tener fichas coronadas (reinas)
+    if curr_black_queens > 0:
+        reward += curr_black_queens * 8
+
+    return reward
 
 def update_q(state, action, reward, next_state, next_moves, visited_states):
     """Actualiza la Q-table usando la fórmula del Q-learning, con penalización si el estado se repite."""
@@ -147,7 +247,7 @@ def move_qlearning(visited_states, board):
     return board
 
 # -------------------------------
-# Funciones para Minimax (con poda alfa-beta y mejoras)
+# Funciones para Minimax (con poda alfa-beta)
 # -------------------------------
 def evaluate_board(board):
     """
@@ -165,12 +265,6 @@ def evaluate_board(board):
 transposition_table = {}
 
 def minimax(board, depth, alpha_val, beta_val, maximizing_player):
-    """
-    Algoritmo minimax recursivo con poda alfa-beta y tabla de transposición.
-    Para el agente minimax (jugador 'R'), se llama con maximizing_player=False,
-    ya que la función de evaluación favorece a 'B'.
-    Retorna (valor, movimiento).
-    """
     key = board_to_state(board) + f"_{depth}_{maximizing_player}"
     if key in transposition_table:
         return transposition_table[key]
@@ -181,13 +275,17 @@ def minimax(board, depth, alpha_val, beta_val, maximizing_player):
         return val, None
 
     best_move = None
+    # Genera y ordena movimientos; si es captura, esos movimientos se pondrán primero.
+    moves = generate_moves(board, 'R')  # Usamos 'R' porque el minimax controla al jugador 'R'
+    # Ordenar los movimientos: para maximizing ordenamos en forma descendente, para minimizing en ascendente.
     if maximizing_player:
-        # En esta rama, el jugador (en teoría) busca maximizar, pero para nuestro caso,
-        # el agente minimax juega con 'R', por lo que no se usará esta rama.
+        moves = sorted(moves, key=lambda m: evaluate_board(handle_move(board, m)), reverse=True)
+    else:
+        moves = sorted(moves, key=lambda m: evaluate_board(handle_move(board, m)))
+
+    if maximizing_player:
         max_eval = float('-inf')
-        for move in sorted(generate_moves(board, 'R'),
-                           key=lambda m: evaluate_board(handle_move(board, m)),
-                           reverse=True):
+        for move in moves:
             new_board = handle_move(board, move)
             eval_val, _ = minimax(new_board, depth - 1, alpha_val, beta_val, False)
             if eval_val > max_eval:
@@ -195,15 +293,12 @@ def minimax(board, depth, alpha_val, beta_val, maximizing_player):
                 best_move = move
             alpha_val = max(alpha_val, eval_val)
             if beta_val <= alpha_val:
-                break
+                break  # Poda alfa-beta
         transposition_table[key] = (max_eval, best_move)
         return max_eval, best_move
     else:
-        # El agente minimax (jugador 'R') busca minimizar la evaluación,
-        # ya que valores menores indican ventaja para 'R'.
         min_eval = float('inf')
-        for move in sorted(generate_moves(board, 'R'),
-                           key=lambda m: evaluate_board(handle_move(board, m))):
+        for move in moves:
             new_board = handle_move(board, move)
             eval_val, _ = minimax(new_board, depth - 1, alpha_val, beta_val, True)
             if eval_val < min_eval:
@@ -211,20 +306,34 @@ def minimax(board, depth, alpha_val, beta_val, maximizing_player):
                 best_move = move
             beta_val = min(beta_val, eval_val)
             if beta_val <= alpha_val:
-                break
+                break  # Poda alfa-beta
         transposition_table[key] = (min_eval, best_move)
         return min_eval, best_move
+    
+def iterative_deepening_minimax(board, max_depth):
+    """
+    Realiza búsqueda iterativa hasta max_depth, devolviendo el mejor movimiento encontrado.
+    """
+    best_move = None
+    for depth in range(1, max_depth + 1):
+        # Reiniciar la tabla de transposición en cada iteración puede ser una opción si la memoria es limitada,
+        # o se puede mantener para aprovechar resultados previos.
+        global transposition_table
+        transposition_table = {}  
+        eval_val, move = minimax(board, depth, float('-inf'), float('inf'), False)
+        if move is not None:
+            best_move = move
+        # Aquí se podría incluir un control de tiempo si fuese necesario.
+    return best_move
 
 def move_minimax(board):
     """
-    Realiza un movimiento para el agente minimax (jugador 'R').
-    Se utiliza una profundidad fija (por ejemplo, 6 niveles).
-    Se llama a minimax con maximizing_player=False para que busque minimizar.
+    Realiza un movimiento para el agente minimax (jugador 'R') utilizando búsqueda iterativa con una profundidad máxima.
     """
-    depth = 6
-    eval_val, move = minimax(board, depth, float('-inf'), float('inf'), False)
-    if move:
-        return handle_move(board, move)
+    max_depth = 2 
+    best_move = iterative_deepening_minimax(board, max_depth)
+    if best_move:
+        return handle_move(board, best_move)
     return board
 
 # -------------------------------
@@ -247,7 +356,7 @@ def training_loop():
     visited_states = set()
     wins = {'B': 0, 'R': 0}
     losses = {'B': 0, 'R': 0}
-    max_episodes = 10000
+    max_episodes = 100
     episode = 0
 
     while episode < max_episodes:
@@ -272,6 +381,7 @@ def training_loop():
             episode += 1
             print(f"Episodio {episode}: {winner_msg} | Wins: {wins} | Losses: {losses} | epsilon: {epsilon:.3f}")
             board = initialize_board()
+            # Alternar quién empieza según el episodio
             current_turn = 'B' if episode % 2 == 0 else 'R'
             visited_states.clear()
             epsilon = max(epsilon * epsilon_decay, epsilon_min)
