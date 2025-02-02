@@ -7,6 +7,7 @@ El agente Q-learning (piezas negras, representado por 'B'), que aprende a partir
 El agente Minimax (piezas rojas, representado por 'R'), que utiliza el algoritmo Minimax con poda alfa‑beta, ordenamiento de movimientos y tabla de transposición para tomar decisiones de forma competitiva.
 Juego IA vs. Humano:
 En este archivo se implementa la posibilidad de jugar contra la IA entrenada. Si ya se cuenta con la tabla Q guardada en q_table.json, la IA utilizará lo aprendido para enfrentar al jugador humano a través de una interfaz gráfica desarrollada con Pygame.
+
 \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
 
 Requisitos
