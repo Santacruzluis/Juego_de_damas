@@ -13,7 +13,7 @@ En este archivo se implementa la posibilidad de jugar contra la IA entrenada. Si
 Requisitos
 Para ejecutar los scripts es necesario contar con:
 
-Python 3.x
+Python 3.13.0
 
 Pygame
 Instálalo con:
